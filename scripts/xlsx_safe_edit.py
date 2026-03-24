@@ -3,11 +3,19 @@ import shutil
 import os
 import re
 import argparse
-import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 from lxml import etree
 
 NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+
+# Config for Attendance
+STUDENT_ROWS = [8, 9, 10]
+MARK_PRESENT = 141 # Shared string ID for '/'
+PERIOD_VAL = 1
+MONTHS_TH = {
+    4: "เมษายน", 5: "พฤษภาคม", 6: "มิถุนายน", 7: "กรกฎาคม", 8: "สิงหาคม", 9: "กันยายน", 
+    10: "ตุลาคม", 11: "พฤศจิกายน", 12: "ธันวาคม", 1: "มกราคม", 2: "กุมภาพันธ์", 3: "มีนาคม"
+}
 
 def col_to_num(col):
     num = 0
@@ -16,13 +24,12 @@ def col_to_num(col):
             num = num * 26 + (ord(c.upper()) - ord('A') + 1)
     return num
 
-def num_to_col_letter(num):
-    result = ""
-    while num > 0:
-        num -= 1
-        result = chr(num % 26 + ord('A')) + result
-        num //= 26
-    return result
+def num_to_col_letter(n):
+    res = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        res = chr(65 + rem) + res
+    return res
 
 def ensure_cell(row_elem, col_letter, row_num):
     target_ref = f'{col_letter}{row_num}'
@@ -43,6 +50,7 @@ def ensure_cell(row_elem, col_letter, row_num):
     return new_c
 
 def set_val(row_elem, col_letter, row_num, value, val_type=None):
+    if row_elem is None: return
     c = ensure_cell(row_elem, col_letter, row_num)
     if val_type == 'str':
         c.set('t', 'str')
@@ -60,16 +68,24 @@ def set_val(row_elem, col_letter, row_num, value, val_type=None):
         v = etree.SubElement(c, f'{{{NS}}}v')
     v.text = str(value)
 
+def clear_val(row_elem, col_letter, row_num):
+    if row_elem is None: return
+    target_ref = f'{col_letter}{row_num}'
+    c = row_elem.find(f'{{{NS}}}c[@r="{target_ref}"]')
+    if c is not None:
+        v = c.find(f'{{{NS}}}v')
+        if v is not None: v.text = ""
+
 def _repack(file_path, extract_dir):
     calc = os.path.join(extract_dir, 'xl', 'calcChain.xml')
     if os.path.exists(calc):
         os.remove(calc)
         ct_path = os.path.join(extract_dir, '[Content_Types].xml')
         if os.path.exists(ct_path):
-            with open(ct_path, 'r', encoding='utf-8') as f: 
+            with open(ct_path, 'r', encoding='utf-8') as f:
                 ct = f.read()
             ct = re.sub(r'<Override[^>]+calcChain[^>]+/>', '', ct)
-            with open(ct_path, 'w', encoding='utf-8') as f: 
+            with open(ct_path, 'w', encoding='utf-8') as f:
                 f.write(ct)
 
     def zipdir(path, ziph):
@@ -77,11 +93,11 @@ def _repack(file_path, extract_dir):
             for f in ff:
                 fp = os.path.join(rd, f)
                 ziph.write(fp, os.path.relpath(fp, path))
-                
+
     backup_path = file_path.replace('.xlsx', '_backup.xlsx')
     if not os.path.exists(backup_path):
         shutil.copy2(file_path, backup_path)
-        
+
     with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipdir(extract_dir, zipf)
     shutil.rmtree(extract_dir)
@@ -118,7 +134,7 @@ def update_main_sheet(file_path, updates):
     ns = {'x': NS}
     rows = root.findall('.//x:row', ns)
     row_by_num = {int(r.get('r', 0)): r for r in rows}
-    
+
     def is_number(val):
         try: float(str(val)); return True
         except: return False
@@ -146,7 +162,7 @@ def fill_score_sem2(file_path, scores_list):
     rows = root.findall('.//x:row', ns)
     row_by_num = {int(r.get('r', 0)): r for r in rows}
     indicator_cols = ['BJ','BK','BL','BM','BN','BO','BP','BQ']
-    
+
     row7 = row_by_num.get(7)
     if row7:
         for col in indicator_cols: set_val(row7, col, 7, 10)
@@ -166,7 +182,7 @@ def fill_score_sem2(file_path, scores_list):
                 if v is not None: bg = int(float(v.text))
         dj = di; dm = dj; dn = dh + dm; do_ = bg + bh; dq = do_ + dn
         dr = round(dq / 200 * 100)
-        
+
         set_val(row, 'BH', excel_row, bh)
         for ci, col in enumerate(indicator_cols): set_val(row, col, excel_row, inds[ci])
         set_val(row, 'DI', excel_row, di)
@@ -189,13 +205,13 @@ def _fill_sheet_matrix(file_path, sheet_file, input_cols, scores_matrix):
     ns = {'x': NS}
     rows = root.findall('.//x:row', ns)
     row_by_num = {int(r.get('r', 0)): r for r in rows}
-    
+
     for idx, excel_row in enumerate(range(8, 8 + len(scores_matrix))):
         row = row_by_num.get(excel_row)
         if not row or idx >= len(scores_matrix): continue
         for ci, col in enumerate(input_cols):
             set_val(row, col, excel_row, scores_matrix[idx][ci])
-            
+
     tree.write(sheet_path, encoding='utf-8', xml_declaration=True)
     _repack(file_path, extract_dir)
 
@@ -222,10 +238,10 @@ def fill_cap_sheet(file_path, cap_sem1, cap_sem2=None, level='primary'):
     ns = {'x': NS}
     rows = root.findall('.//x:row', ns)
     row_by_num = {int(r.get('r', 0)): r for r in rows}
-    
+
     sem1_cols = ['H','L','P','T','X'] if level=='primary' else ['H','J','L','N','P']
     sem2_cols = ['I','M','Q','U','Y'] if level=='primary' else []
-    
+
     for idx, excel_row in enumerate(range(8, 8 + len(cap_sem1))):
         row = row_by_num.get(excel_row)
         if not row: continue
@@ -239,83 +255,56 @@ def fill_cap_sheet(file_path, cap_sem1, cap_sem2=None, level='primary'):
     _repack(file_path, extract_dir)
     print(f'✅ Cap sheet updated')
 
-def fill_attendance_sem2(file_path, sem_start, sem_end, teach_weekday, period, mark, holidays, student_rows):
-    """Primary Sem 2 Attendance"""
-    import xml.etree.ElementTree as ET2
-    ET2.register_namespace('', NS)
+def fill_attendance_surgical(file_path, sheet_xml_name, start_monday, term_start, term_end, teach_weekday_idx, period_val, mark_id, holidays, student_rows):   
+    """Advanced Surgical Attendance Fix: Full Week Sequencing"""
+    extract_dir = 'xlsx_tmp_att'
+    if os.path.exists(extract_dir): shutil.rmtree(extract_dir)
+    with zipfile.ZipFile(file_path, 'r') as z: z.extractall(extract_dir)
     
-    mon = sem_start
-    while mon.weekday() != 0: mon += timedelta(days=1)
-    weeks = []
-    while mon <= sem_end:
-        weeks.append([mon+timedelta(days=i) for i in range(5)])
-        mon += timedelta(days=7)
+    sheet_path = f'{extract_dir}/xl/worksheets/{sheet_xml_name}'
+    tree = etree.parse(sheet_path, etree.XMLParser(remove_blank_text=False))
+    root = tree.getroot()
+    ns = {'x': NS}
+    
+    rows = {rn: root.find(f'.//x:row[@r="{rn}"]', ns) for rn in [4, 6, 7] + student_rows}
+    
+    curr_mon = start_monday
+    for w in range(22):
+        start_col_idx = 8 + (w * 6) # Col H starts at index 8
+        # Set Month string in the first column of the week
+        set_val(rows[4], num_to_col_letter(start_col_idx), 4, MONTHS_TH[curr_mon.month], val_type='str')
+        
+        # 5-day week sequencing
+        for d_off in range(5):
+            col_let = num_to_col_letter(start_col_idx + d_off)
+            d_obj = curr_mon + timedelta(days=d_off)
+            
+            # Write Date
+            set_val(rows[6], col_let, 6, d_obj.day)
+            
+            # Write Marks ONLY on the teaching day, inside term, and not a holiday
+            is_teaching_day = (d_off == teach_weekday_idx)
+            is_in_term = (term_start <= d_obj <= term_end)
+            is_holiday = (d_obj in holidays)
+            
+            if is_teaching_day and is_in_term and not is_holiday:
+                set_val(rows[7], col_let, 7, period_val)
+                for rn in student_rows:
+                    set_val(rows[rn], col_let, rn, mark_id, val_type='s')
+            else:
+                # Clear existing marks to prevent legacy data jumps
+                clear_val(rows[7], col_let, 7)
+                for rn in student_rows:
+                    clear_val(rows[rn], col_let, rn)
+                    
+        curr_mon += timedelta(days=7)
 
-    updates = {}
-    for n, wd in enumerate(weeks):
-        base = 8 + n*6
-        m0, m4 = wd[0], wd[4]
-        # simplified month formatting
-        updates[(4, num_to_col_letter(base))] = (f"{m0.month}-{m4.month}", 'str')
-        for d in range(5):
-            dd = wd[d]
-            if dd <= sem_end:
-                updates[(6, num_to_col_letter(base+d))] = (str(dd.day), 'n')
-        tday = wd[teach_weekday]
-        tc = num_to_col_letter(base+teach_weekday)
-        if tday <= sem_end and tday not in holidays:
-            updates[(7, tc)] = (str(period), 'n')
-            for sr in student_rows:
-                updates[(sr, tc)] = (mark, 'str')
-
-    with zipfile.ZipFile(file_path) as z:
-        files = {n: z.read(n) for n in z.namelist()}
-
-    root = ET2.fromstring(files['xl/worksheets/sheet6.xml'].decode('utf-8'))
-    sd = root.find(f'{{{NS}}}sheetData')
-    row_map = {int(r.get('r')): r for r in sd.findall(f'{{{NS}}}row')}
-
-    def get_row(rn):
-        if rn not in row_map:
-            nr = ET2.SubElement(sd, f'{{{NS}}}row'); nr.set('r', str(rn))
-            row_map[rn] = nr
-        return row_map[rn]
-
-    def set_cell(row_el, cref, value, vtype):
-        col_n = col_to_num(''.join(filter(str.isalpha, cref)))
-        c = next((x for x in row_el.findall(f'{{{NS}}}c') if x.get('r')==cref), None)
-        if c is None:
-            c = ET2.Element(f'{{{NS}}}c'); c.set('r', cref)
-            idx = sum(1 for x in row_el.findall(f'{{{NS}}}c') if col_to_num(''.join(filter(str.isalpha, x.get('r')))) < col_n)
-            row_el.insert(idx, c)
-        for tag in [f'{{{NS}}}v', f'{{{NS}}}f']:
-            el = c.find(tag)
-            if el is not None: c.remove(el)
-        if vtype == 'str': c.set('t', 'str')
-        elif 't' in c.attrib: del c.attrib['t']
-        v = ET2.SubElement(c, f'{{{NS}}}v'); v.text = value
-
-    for (rn, cl), (val, vtype) in sorted(updates.items()):
-        set_cell(get_row(rn), f'{cl}{rn}', val, vtype)
-
-    rows_sorted = sorted(sd.findall(f'{{{NS}}}row'), key=lambda r: int(r.get('r')))
-    for r in list(sd): sd.remove(r)
-    for r in rows_sorted: sd.append(r)
-
-    files['xl/worksheets/sheet6.xml'] = ET2.tostring(root, 'utf-8', xml_declaration=True)
-    files.pop('xl/calcChain.xml', None)
-    ct = files['[Content_Types].xml'].decode('utf-8')
-    ct = re.sub(r'<Override[^>]+calcChain[^>]+/>', '', ct)
-    files['[Content_Types].xml'] = ct.encode('utf-8')
-
-    tmp = file_path + '.tmp'
-    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
-        for name, data in files.items(): zout.writestr(name, data)
-    os.replace(tmp, file_path)
-    print(f'✅ Attendance Sem 2 updated')
+    tree.write(sheet_path, encoding='utf-8', xml_declaration=True)
+    _repack(file_path, extract_dir)
+    print(f'✅ Attendance for {sheet_xml_name} updated surgically.')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Safe Edit Excel Grade")
     parser.add_argument('file', help="Path to the Excel file")
     args = parser.parse_args()
-    print("Use this module by importing its functions: update_main_sheet, fill_score_sem2, fill_kun_sheet, etc.")
+    print("Use this module by importing its functions.")
