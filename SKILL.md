@@ -11,7 +11,8 @@ The traditional `openpyxl.save()` method strips out images, drawings, and charts
 
 ## Core Workflow
 
-1. **Identify Level:** Determine if the file is for Primary (ประถม) or Secondary (มัธยม).
+1. **Pre-edit Audit (Mandatory):** Before making any changes to the Main Sheet (Sheet1), the agent MUST read and report ALL existing key values (School, Subject, Teacher, Year, etc.) to the user for verification. Do NOT skip any fields.
+2. **Identify Level:** Determine if the file is for Primary (ประถม) or Secondary (มัธยม).
    - **Primary:** คะแนน 1 (Scores) has *both* Semester 1 and 2 in `sheet8.xml`. Attendance is split into `sheet5.xml` (Sem 1) and `sheet6.xml` (Sem 2).
    - **Secondary:** คะแนน 1 (Scores) is usually in `sheet6.xml`.
 2. **Execute Safe Edit Script:** Use the bundled Python script functions to handle the Zip/Unzip and XML cleanup.
@@ -42,3 +43,46 @@ The traditional `openpyxl.save()` method strips out images, drawings, and charts
 - "Change scores for student [name]"
 - "Fix attendance in ปพ.5"
 - "Safe edit excel"
+
+## Expert Knowledge: Por Por 5 Attendance (Sheet 6)
+- **Month Selectors:** Row 4 (H4:EU4) contains List Box selectors for months. Formulas in Row 6 (Dates) depend on these.
+- **Weekly Mapping (Sem 2):** 
+  - Week 1-4 (H, N, T, Z) -> 'พฤศจิกายน'
+  - Week 5-8 (AF, AL, AR, AX) -> 'ธันวาคม'
+  - Week 9-13 (BD, BJ, BP, BV, CB) -> 'มกราคม'
+  - Week 14-17 (CH, CN, CT, CZ) -> 'กุมภาพันธ์'
+  - Week 18-22 (DF, DL, DR, DX, ED) -> 'มีนาคม'
+- **Execution:** Always write the Thai month name as a string directly to these selector cells to trigger automatic date calculations.
+
+## Advanced Surgical Editing (Safety First)
+- **Rule:** Never recreate the entire <sheetData> tag for complex sheets (Sheet 5, 6, 8, etc.). 
+- **Method:** Locate existing <row> and <c> tags and update only their <v> (value) or <f> (formula). This preserves merged cells, conditional formatting, and complex XML structures.
+- **Recalculation:** Always delete xl/calcChain.xml and its reference in [Content_Types].xml to force Excel to update formulas on next open.
+
+## Standard Cell Mapping (Primary Por Por 5)
+### Main Sheet (Sheet 1):
+- **School Name:** E5
+- **Subject Code:** E12
+- **Subject Name:** I12
+- **Semester:** E13
+- **Academic Year:** I13
+- **Teacher:** E15
+
+### Attendance Sheets (Sheet 5/6):
+- **Month Selectors (List Box):** Row 4 (e.g., L4, AJ4, BH4, CL4, DJ4)
+- **Weekday Labels:** Row 5 (ID 107 = 'ศ', ID 104 = 'อ', etc.)
+- **Day Numbers:** Row 6
+- **Period Count:** Row 7
+- **Student Attendance:** Rows 8, 9, 10... (ID 141 = '/')
+
+## Holiday Logic
+- **Constraint:** Always cross-reference Thai public holidays for the specific academic year before filling attendance. 
+- **Action:** Skip marking student attendance (Row 8+) and periods (Row 7) for holiday columns, but ensure Month and Day headers are still filled for visual consistency.
+
+## Advanced Attendance Logic: Full Week Sequencing
+- **Date Consistency (Row 6):** When updating attendance dates, you MUST calculate and populate the dates for the entire 5-day week (Monday through Friday) within each weekly block, regardless of the actual teaching day. This prevents visual anomalies where old data mixes with new data. 
+- **Targeted Marking:** While the dates (Row 6) are filled for all 5 days, the attendance marks (Row 8+) and period counts (Row 7) should ONLY be applied to the specific teaching day(s) (e.g., Friday).
+- **Tab Verification:** Never assume XML file names correspond directly to Semesters. Always verify the 
+Id mapping. For this standard Por Por 5 format:
+  - **เวลาเรียน1 (Term 1):** Maps to sheet5.xml
+  - **เวลาเรียน2 (Term 2):** Maps to sheet6.xml
